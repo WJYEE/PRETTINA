@@ -280,6 +280,69 @@ button {
   background: var(--accent);
 }
 
+.timer {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.timer.reached {
+  border-color: rgba(124, 200, 173, 0.95);
+  background: #f3fff9;
+}
+
+.timer-top,
+.timer-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.timer-label {
+  margin: 0;
+  color: var(--ink);
+  font-size: 0.9rem;
+  font-weight: 900;
+}
+
+.timer-target {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.timer-state {
+  flex: 0 0 auto;
+  padding: 5px 8px;
+  border-radius: 999px;
+  color: var(--accent-strong);
+  background: var(--panel-soft);
+  font-size: 0.74rem;
+  font-weight: 900;
+}
+
+.timer.reached .timer-state {
+  color: #24745a;
+  background: #dff7ed;
+}
+
+.timer-time {
+  font-size: 2rem;
+  font-weight: 900;
+  line-height: 1;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.timer-actions .soft-button {
+  flex: 1;
+}
+
 details {
   display: grid;
   gap: 8px;

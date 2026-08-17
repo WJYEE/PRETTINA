@@ -44,6 +44,7 @@ type HabitCard = {
 
 const storageKey = "prettyna-store-v1";
 const dayMs = 1000 * 60 * 60 * 24;
+const timerStartSuffix = "_started_at";
 
 const resources = {
   guaSha: "https://www.youtube.com/results?search_query=face+gua+sha+routine",
@@ -211,12 +212,12 @@ const habitSummary = [
   { label: "6시 기상", test: (day: DailyData) => Boolean(day.pretty.wake_6) },
   {
     label: "운동",
-    test: (day: DailyData) => Number(day.pretty.cardio_minutes || 0) >= 30 || Number(day.pretty.strength_minutes || 0) >= 30,
+    test: (day: DailyData) => elapsedMinutes(day.pretty, "cardio_minutes") >= 30 || elapsedMinutes(day.pretty, "strength_minutes") >= 30,
   },
   {
     label: "괄사",
     test: (day: DailyData) =>
-      Number(day.pretty.morning_gua_sha_minutes || 0) >= 10 || Number(day.pretty.evening_gua_sha_minutes || 0) >= 10,
+      elapsedMinutes(day.pretty, "morning_gua_sha_minutes") >= 10 || elapsedMinutes(day.pretty, "evening_gua_sha_minutes") >= 10,
   },
   {
     label: "스킨케어",
@@ -228,9 +229,9 @@ const habitSummary = [
       Boolean(day.pretty.evening_moisturizer),
   },
   { label: "식단", test: (day: DailyData) => Boolean(day.pretty.diet_meal) },
-  { label: "뉴스", test: (day: DailyData) => Number(day.brain.news_minutes || 0) >= 20 },
-  { label: "데이터 공부", test: (day: DailyData) => Number(day.brain.data_minutes || 0) >= 30 },
-  { label: "언어 공부", test: (day: DailyData) => Number(day.brain.language_minutes || 0) >= 30 },
+  { label: "뉴스", test: (day: DailyData) => elapsedMinutes(day.brain, "news_minutes") >= 20 },
+  { label: "데이터 공부", test: (day: DailyData) => elapsedMinutes(day.brain, "data_minutes") >= 30 },
+  { label: "언어 공부", test: (day: DailyData) => elapsedMinutes(day.brain, "language_minutes") >= 30 },
 ];
 
 function emptyDay(): DailyData {
@@ -264,7 +265,27 @@ function readNumber(value: Primitive | undefined) {
   return typeof value === "number" ? value : Number(value || 0);
 }
 
-function cardProgress(card: HabitCard, day: DailyData) {
+function startedAtKey(key: string) {
+  return `${key}${timerStartSuffix}`;
+}
+
+function elapsedMinutes(data: Record<string, Primitive>, key: string, now = Date.now()) {
+  const savedMinutes = readNumber(data[key]);
+  const startedAt = readNumber(data[startedAtKey(key)]);
+  if (!startedAt) return savedMinutes;
+  return savedMinutes + Math.max(0, now - startedAt) / 60000;
+}
+
+function formatDuration(minutes: number) {
+  const totalSeconds = Math.floor(minutes * 60);
+  const hours = Math.floor(totalSeconds / 3600);
+  const mins = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) return `${hours}:${String(mins).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  return `${String(mins).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function cardProgress(card: HabitCard, day: DailyData, now = Date.now()) {
   if (card.customTotal) return card.customTotal(day);
   let done = 0;
   let total = 0;
@@ -279,7 +300,7 @@ function cardProgress(card: HabitCard, day: DailyData) {
   card.fields?.forEach((field) => {
     if (!field.target) return;
     total += 1;
-    if (readNumber(data[field.key]) >= field.target) done += 1;
+    if (elapsedMinutes(data, field.key, now) >= field.target) done += 1;
   });
 
   return { done, total };
@@ -289,10 +310,10 @@ function percent(done: number, total: number) {
   return total === 0 ? 100 : Math.round((done / total) * 100);
 }
 
-function sectionProgress(cards: HabitCard[], day: DailyData) {
+function sectionProgress(cards: HabitCard[], day: DailyData, now = Date.now()) {
   return cards.reduce(
     (sum, card) => {
-      const current = cardProgress(card, day);
+      const current = cardProgress(card, day, now);
       return { done: sum.done + current.done, total: sum.total + current.total };
     },
     { done: 0, total: 0 },
@@ -325,6 +346,7 @@ export default function Home() {
   const [selectedDate, setSelectedDate] = useState(todayKey);
   const [store, setStore] = useState<Store>(() => initialStore());
   const [loaded, setLoaded] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
     const saved = window.localStorage.getItem(storageKey);
@@ -349,9 +371,14 @@ export default function Home() {
     setStore((current) => ensureDay(current, selectedDate));
   }, [selectedDate]);
 
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+
   const currentDay = store.days[selectedDate] ?? emptyDay();
-  const prettyProgress = sectionProgress(prettyCards, currentDay);
-  const brainProgress = sectionProgress(brainCards, currentDay);
+  const prettyProgress = sectionProgress(prettyCards, currentDay, now);
+  const brainProgress = sectionProgress(brainCards, currentDay, now);
   const totalDone = prettyProgress.done + brainProgress.done;
   const totalItems = prettyProgress.total + brainProgress.total;
   const todayPercent = percent(totalDone, totalItems);
@@ -438,12 +465,12 @@ export default function Home() {
         <>
           <section className="section">
             <h2 className="section-title">💗 PRETTY</h2>
-            <div className="section-grid">{prettyCards.map((card) => renderHabitCard(card, currentDay, update))}</div>
+            <div className="section-grid">{prettyCards.map((card) => renderHabitCard(card, currentDay, update, now))}</div>
           </section>
 
           <section className="section">
             <h2 className="section-title">🧠 BRAIN</h2>
-            <div className="section-grid">{brainCards.map((card) => renderHabitCard(card, currentDay, update))}</div>
+            <div className="section-grid">{brainCards.map((card) => renderHabitCard(card, currentDay, update, now))}</div>
             <JobPostings
               items={safePostings(String(currentDay.brain.job_postings || "[]"))}
               onAdd={addPosting}
@@ -465,6 +492,7 @@ export default function Home() {
           todayPercent={todayPercent}
           prettyPercent={prettyPercent}
           brainPercent={brainPercent}
+          now={now}
         />
       )}
 
@@ -496,8 +524,9 @@ function renderHabitCard(
   card: HabitCard,
   currentDay: DailyData,
   update: (section: keyof DailyData, key: string, value: Primitive) => void,
+  now: number,
 ) {
-  const progress = cardProgress(card, currentDay);
+  const progress = cardProgress(card, currentDay, now);
   const score = percent(progress.done, progress.total);
   const data = currentDay[card.section];
   const isDone = progress.total > 0 && progress.done === progress.total;
@@ -522,7 +551,15 @@ function renderHabitCard(
       {card.fields && (
         <div className="fields">
           {card.fields.map((field) => (
-            <FieldControl field={field} key={field.key} value={data[field.key]} onChange={(value) => update(card.section, field.key, value)} />
+            <FieldControl
+              field={field}
+              key={field.key}
+              now={now}
+              startedAt={data[startedAtKey(field.key)]}
+              value={data[field.key]}
+              onChange={(value) => update(card.section, field.key, value)}
+              onStartedAtChange={(value) => update(card.section, startedAtKey(field.key), value)}
+            />
           ))}
         </div>
       )}
@@ -547,12 +584,18 @@ function renderHabitCard(
 
 function FieldControl({
   field,
+  now,
+  startedAt,
   value,
   onChange,
+  onStartedAtChange,
 }: {
   field: FieldItem;
+  now: number;
+  startedAt: Primitive | undefined;
   value: Primitive | undefined;
   onChange: (value: Primitive) => void;
+  onStartedAtChange: (value: Primitive) => void;
 }) {
   if (field.type === "checkbox") {
     return (
@@ -560,6 +603,19 @@ function FieldControl({
         <input type="checkbox" checked={Boolean(value)} onChange={(event) => onChange(event.target.checked)} />
         <span>{field.label}</span>
       </label>
+    );
+  }
+
+  if (field.type === "number" && field.target) {
+    return (
+      <StopwatchControl
+        field={field}
+        now={now}
+        startedAt={startedAt}
+        value={value}
+        onChange={onChange}
+        onStartedAtChange={onStartedAtChange}
+      />
     );
   }
 
@@ -579,6 +635,65 @@ function FieldControl({
         />
       )}
     </label>
+  );
+}
+
+function StopwatchControl({
+  field,
+  now,
+  startedAt,
+  value,
+  onChange,
+  onStartedAtChange,
+}: {
+  field: FieldItem;
+  now: number;
+  startedAt: Primitive | undefined;
+  value: Primitive | undefined;
+  onChange: (value: Primitive) => void;
+  onStartedAtChange: (value: Primitive) => void;
+}) {
+  const baseMinutes = readNumber(value);
+  const startTime = readNumber(startedAt);
+  const running = startTime > 0;
+  const currentMinutes = startTime ? baseMinutes + Math.max(0, now - startTime) / 60000 : baseMinutes;
+  const reached = currentMinutes >= (field.target || 0);
+
+  function start() {
+    if (running) return;
+    onStartedAtChange(Date.now());
+  }
+
+  function pause() {
+    if (!running) return;
+    onChange(currentMinutes);
+    onStartedAtChange(0);
+  }
+
+  function reset() {
+    onChange(0);
+    onStartedAtChange(0);
+  }
+
+  return (
+    <div className={`timer ${reached ? "reached" : ""}`}>
+      <div className="timer-top">
+        <div>
+          <p className="timer-label">{field.label}</p>
+          <p className="timer-target">목표 {field.target}분</p>
+        </div>
+        <span className="timer-state">{reached ? "달성" : "진행"}</span>
+      </div>
+      <div className="timer-time">{formatDuration(currentMinutes)}</div>
+      <div className="timer-actions">
+        <button className="soft-button primary" type="button" onClick={running ? pause : start}>
+          {running ? "일시정지" : "시작"}
+        </button>
+        <button className="soft-button" type="button" onClick={reset}>
+          초기화
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -640,6 +755,7 @@ function Dashboard({
   todayPercent,
   prettyPercent,
   brainPercent,
+  now,
 }: {
   store: Store;
   calendarDays: string[];
@@ -650,6 +766,7 @@ function Dashboard({
   todayPercent: number;
   prettyPercent: number;
   brainPercent: number;
+  now: number;
 }) {
   const bodyChanges = getBodyChanges(store);
 
@@ -691,8 +808,8 @@ function Dashboard({
         <div className="calendar">
           {calendarDays.map((date, index) => {
             const day = store.days[date] ?? emptyDay();
-            const pretty = sectionProgress(prettyCards, day);
-            const brain = sectionProgress(brainCards, day);
+            const pretty = sectionProgress(prettyCards, day, now);
+            const brain = sectionProgress(brainCards, day, now);
             const score = percent(pretty.done + brain.done, pretty.total + brain.total);
             const level = score === 0 ? 0 : score < 40 ? 1 : score < 75 ? 2 : 3;
             return (
