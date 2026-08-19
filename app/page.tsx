@@ -423,6 +423,13 @@ function formatDuration(minutes: number) {
   return `${String(mins).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 }
 
+function formatHoursMinutes(minutes: number) {
+  const totalMinutes = Math.floor(minutes);
+  const hours = Math.floor(totalMinutes / 60);
+  const mins = totalMinutes % 60;
+  return `${String(hours).padStart(2, "0")}h ${String(mins).padStart(2, "0")}m`;
+}
+
 function cardProgress(card: HabitCard, day: DailyData, now = Date.now()) {
   if (card.customTotal) return card.customTotal(day);
   let done = 0;
@@ -524,6 +531,9 @@ export default function Home() {
   const prettyPercent = percent(prettyProgress.done, prettyProgress.total);
   const brainPercent = percent(brainProgress.done, brainProgress.total);
   const dayNumber = getDayNumber(store.startDate, selectedDate);
+  const totalStudyMinutes = readSessions(currentDay, "sessions")
+    .filter((session) => session.category === "brain")
+    .reduce((sum, session) => sum + Math.max(0, (session.isRunning ? now : session.endedAt ?? now) - session.startedAt) / 60000, 0);
 
   const calendarDays = useMemo(
     () => Array.from({ length: 30 }, (_, index) => addDays(store.startDate, index)),
@@ -746,7 +756,12 @@ export default function Home() {
                 오늘부터 1일차
               </button>
             </div>
-            <p className="today-score">TODAY {todayPercent}%</p>
+            <p className="today-score">
+              <span className="today-label-group">
+                TODAY <span className="study-time-inline">({formatHoursMinutes(totalStudyMinutes)})</span>
+              </span>{" "}
+              {todayPercent}%
+            </p>
           </div>
           <div className="split-score">
             PRETTY {prettyPercent}% · BRAIN {brainPercent}%
