@@ -695,6 +695,11 @@ export default function Home() {
     update("brain", "job_postings", JSON.stringify(items.filter((_, itemIndex) => itemIndex !== index)));
   }
 
+  function resetStartDate() {
+    if (!window.confirm("오늘을 1일차로 다시 설정할까요? 지금까지 날짜별로 기록한 데이터는 그대로 유지돼요.")) return;
+    setStore((current) => ({ ...current, startDate: todayKey() }));
+  }
+
   function handleImage(event: ChangeEvent<HTMLInputElement>, key: "facePhoto" | "bodyPhoto") {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -735,7 +740,12 @@ export default function Home() {
       <section className="hero" aria-label="오늘 진행 상황">
         <div className="hero-main">
           <div>
-            <p className="day">DAY {String(dayNumber).padStart(2, "0")} / 30</p>
+            <div className="day-row">
+              <p className="day">DAY {String(dayNumber).padStart(2, "0")} / 30</p>
+              <button type="button" className="day-reset-btn" onClick={resetStartDate}>
+                오늘부터 1일차
+              </button>
+            </div>
             <p className="today-score">TODAY {todayPercent}%</p>
           </div>
           <div className="split-score">
