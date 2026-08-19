@@ -706,13 +706,15 @@ export default function Home() {
   }
 
   function resetStartDate() {
-    if (
-      !window.confirm(
-        "오늘을 1일차로 다시 설정할까요? 오늘 이전 날짜의 기록은 삭제되고, 오늘 기록부터 1일차로 유지돼요.",
-      )
-    )
-      return;
-    const newStart = todayKey();
+    // "오늘"을 다시 계산하지 않고 화면에 선택된 날짜를 그대로 기준으로 삼는다.
+    // 자정을 넘기는 사이 클릭하면 실제 "오늘"이 바뀌어 방금 기록한 데이터까지 삭제될 수 있기 때문.
+    const newStart = selectedDate;
+    const removedDates = Object.keys(store.days).filter((dateKey) => dateKey < newStart);
+    const message =
+      removedDates.length > 0
+        ? `${newStart}을(를) 1일차로 설정할까요?\n이전 날짜 기록 ${removedDates.length}일치(${removedDates.join(", ")})가 삭제돼요.`
+        : `${newStart}을(를) 1일차로 설정할까요?`;
+    if (!window.confirm(message)) return;
     setStore((current) => {
       const nextDays: Record<string, DailyData> = {};
       Object.keys(current.days).forEach((dateKey) => {
@@ -903,6 +905,31 @@ export default function Home() {
                 placeholder="외운 표현이나 문장을 적어보세요."
               />
             </label>
+          </article>
+
+          <article className="card">
+            <div className="row-between">
+              <h2 className="card-title">점심 · 저녁</h2>
+              <span className="badge">Diet</span>
+            </div>
+            <div className="two-col">
+              <label className="field">
+                점심
+                <textarea
+                  value={String(currentDay.pretty.lunch_meal || "")}
+                  onChange={(event) => update("pretty", "lunch_meal", event.target.value)}
+                  placeholder="오늘 점심 식사를 적어보세요."
+                />
+              </label>
+              <label className="field">
+                저녁
+                <textarea
+                  value={String(currentDay.pretty.dinner_meal || "")}
+                  onChange={(event) => update("pretty", "dinner_meal", event.target.value)}
+                  placeholder="오늘 저녁 식사를 적어보세요."
+                />
+              </label>
+            </div>
           </article>
 
           <article className="card">
