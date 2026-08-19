@@ -10,6 +10,7 @@ type DailyData = {
   pretty: Record<string, Primitive>;
   brain: Record<string, Primitive>;
   record: Record<string, Primitive>;
+  sessions?: TaskSession[];
 };
 
 type Store = {
@@ -30,6 +31,11 @@ type FieldItem = {
   target?: number;
 };
 
+type TimerSession = {
+  start: number;
+  end?: number | null;
+};
+
 type HabitCard = {
   id: string;
   title: string;
@@ -42,9 +48,50 @@ type HabitCard = {
   customTotal?: (data: DailyData) => { done: number; total: number };
 };
 
+type PlannerTodo = {
+  id: string;
+  text: string;
+  done: boolean;
+};
+
+type TaskSession = {
+  id: string;
+  taskId: string;
+  taskName: string;
+  category: "pretty" | "brain";
+  goalMinutes: number;
+  startedAt: number;
+  endedAt?: number;
+  isRunning: boolean;
+};
+
+type TimerTask = {
+  id: string;
+  name: string;
+  category: "pretty" | "brain";
+  goalMinutes: number;
+  description?: string;
+};
+
+type DailyDataWithSessions = DailyData & {
+  sessions?: TaskSession[];
+};
+
 const storageKey = "prettyna-store-v1";
 const dayMs = 1000 * 60 * 60 * 24;
 const timerStartSuffix = "_started_at";
+const timerSessionSuffix = "_sessions";
+// task 개수만큼 색을 넉넉히 마련해 카테고리 안에서도 task별로 겹치지 않게 구분한다.
+// PRETTY 4개는 1:1로 전부 다른 색, BRAIN 8개는 7가지 색을 순환(마지막 1개만 재사용)한다.
+const categoryColorPalette: Record<SectionName, string[]> = {
+  pretty: ["#ff45da", "#ff4da7", "#ff777a", "#ff8066"],
+  brain: ["#ffa75b", "#2c73d2", "#ffd254", "#008f7a", "#f9f871", "#0089ba", "#00c9a7"],
+};
+
+const categoryColors: Record<SectionName, string> = {
+  pretty: categoryColorPalette.pretty[1],
+  brain: categoryColorPalette.brain[1],
+};
 
 const resources = {
   guaSha: "https://www.youtube.com/results?search_query=face+gua+sha+routine",
@@ -55,6 +102,36 @@ const resources = {
   opic: "https://www.youtube.com/results?search_query=OPIc+practice",
   data: "https://www.kaggle.com/learn",
 };
+
+// 타이머 기반 Task들 (Today 화면에서 실행)
+const timerTasks: TimerTask[] = [
+  // PRETTY
+  { id: "morning_gua_sha", name: "얼굴 괄사 (아침)", category: "pretty", goalMinutes: 10 },
+  { id: "evening_gua_sha", name: "얼굴 괄사 (저녁)", category: "pretty", goalMinutes: 10 },
+  { id: "cardio", name: "유산소", category: "pretty", goalMinutes: 30 },
+  { id: "strength", name: "근력", category: "pretty", goalMinutes: 30 },
+  // BRAIN
+  { id: "news", name: "뉴스", category: "brain", goalMinutes: 20 },
+  { id: "company_study", name: "회사 공부", category: "brain", goalMinutes: 20 },
+  { id: "common_knowledge", name: "상식", category: "brain", goalMinutes: 20 },
+  { id: "interview_prep", name: "면접 준비", category: "brain", goalMinutes: 30 },
+  { id: "data_study", name: "데이터 공부", category: "brain", goalMinutes: 30 },
+  { id: "project", name: "내 프로젝트", category: "brain", goalMinutes: 20 },
+  { id: "language", name: "언어 공부", category: "brain", goalMinutes: 30 },
+  { id: "voice", name: "발성 연습", category: "brain", goalMinutes: 10 },
+];
+
+// 카테고리별 팔레트를 순환 배정해 Dashboard Time Table과 시각적으로 연동한다.
+const taskColors: Record<string, string> = (() => {
+  const counters: Record<SectionName, number> = { pretty: 0, brain: 0 };
+  const map: Record<string, string> = {};
+  timerTasks.forEach((task) => {
+    const palette = categoryColorPalette[task.category];
+    const index = counters[task.category]++;
+    map[task.id] = palette[index % palette.length];
+  });
+  return map;
+})();
 
 const prettyCards: HabitCard[] = [
   {
@@ -134,13 +211,11 @@ const prettyCards: HabitCard[] = [
   {
     id: "diet",
     title: "Diet",
-    subtitle: "식단 조건 체크",
+    subtitle: "점심과 저녁 식단을 정리해보세요",
     section: "pretty",
-    checks: [
-      { key: "no_food_after_7", label: "오후 7시 이후 음식 먹지 않기" },
-      { key: "snack_limit", label: "간식 최대 작은 봉지 2개" },
-      { key: "diet_meal", label: "하루 한 끼 이상 식단용 음식 포함" },
-      { key: "no_delivery", label: "배달음식 / 음식 구매하지 않기" },
+    fields: [
+      { key: "lunch_meal", label: "점심", type: "textarea" },
+      { key: "dinner_meal", label: "저녁", type: "textarea" },
     ],
   },
 ];
@@ -161,18 +236,9 @@ const brainCards: HabitCard[] = [
   {
     id: "career",
     title: "Career",
-    subtitle: "면접, 회사 공부, 채용공고, 인적성",
+    subtitle: "오늘 준비한 것만 기록해보세요",
     section: "brain",
-    fields: [
-      { key: "interview_minutes", label: "면접 준비 시간", type: "number", target: 30 },
-      { key: "interview_prepared", label: "오늘 준비한 것", type: "textarea" },
-      { key: "interview_feeling", label: "느낀 점", type: "textarea" },
-      { key: "company_name", label: "회사명", type: "text" },
-      { key: "company_minutes", label: "회사 공부 시간", type: "number", target: 20 },
-      { key: "company_note", label: "간략한 정리", type: "textarea" },
-      { key: "aptitude_minutes", label: "인적성 공부 시간", type: "number" },
-      { key: "aptitude_note", label: "공부한 영역 / 내용", type: "textarea" },
-    ],
+    fields: [{ key: "interview_prepared", label: "오늘 준비한 것", type: "textarea" }],
   },
   {
     id: "dataProject",
@@ -235,7 +301,7 @@ const habitSummary = [
 ];
 
 function emptyDay(): DailyData {
-  return { pretty: {}, brain: {}, record: {} };
+  return { pretty: {}, brain: {}, record: {}, sessions: [] };
 }
 
 function todayKey() {
@@ -269,8 +335,80 @@ function startedAtKey(key: string) {
   return `${key}${timerStartSuffix}`;
 }
 
+function sessionKey(key: string) {
+  return `${key}${timerSessionSuffix}`;
+}
+
+function readTimerSessions(data: DailyData | Record<string, Primitive>, key: string): TimerSession[] {
+  const raw = String((data as any)[sessionKey(key)] || "[]");
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((item) => item && typeof item === "object")
+      .map((item) => ({
+        start: Number(item.start || 0),
+        end: item.end === null || item.end === undefined ? null : Number(item.end || 0),
+      }))
+      .filter((item) => item.start > 0);
+  } catch {
+    return [];
+  }
+}
+
+function readTodoList(data: Record<string, Primitive>): PlannerTodo[] {
+  const raw = String(data.todoList || "[]");
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((item) => item && typeof item === "object")
+      .map((item) => ({
+        id: String(item.id || (typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`)),
+        text: String(item.text || ""),
+        done: Boolean(item.done),
+      }))
+      .filter((item) => item.text.trim().length > 0);
+  } catch {
+    return [];
+  }
+}
+
+function readSessions(data: DailyData | Record<string, Primitive>, key: string = "sessions"): TaskSession[] {
+  const raw = (data as any)[key];
+  let parsed: unknown;
+  if (Array.isArray(raw)) {
+    parsed = raw;
+  } else {
+    try {
+      parsed = JSON.parse(String(raw || "[]"));
+    } catch {
+      parsed = [];
+    }
+  }
+  if (!Array.isArray(parsed)) return [];
+  return parsed
+    .filter((item) => item && typeof item === "object")
+    .map((item) => ({
+      id: String(item.id || `${Date.now()}-${Math.random()}`),
+      taskId: String(item.taskId || ""),
+      taskName: String(item.taskName || ""),
+      category: (item.category === "pretty" || item.category === "brain" ? item.category : "pretty") as "pretty" | "brain",
+      goalMinutes: Number(item.goalMinutes || 0),
+      startedAt: Number(item.startedAt || 0),
+      endedAt: item.endedAt ? Number(item.endedAt) : undefined,
+      isRunning: Boolean(item.isRunning),
+    }))
+    .filter((item) => item.taskId && item.startedAt > 0);
+}
+
 function elapsedMinutes(data: Record<string, Primitive>, key: string, now = Date.now()) {
   const savedMinutes = readNumber(data[key]);
+  const sessions = readTimerSessions(data, key);
+  const activeSession = sessions.find((session) => !session.end);
+  if (sessions.length > 0) {
+    return savedMinutes + (activeSession ? Math.max(0, now - Number(activeSession.start)) / 60000 : 0);
+  }
   const startedAt = readNumber(data[startedAtKey(key)]);
   if (!startedAt) return savedMinutes;
   return savedMinutes + Math.max(0, now - startedAt) / 60000;
@@ -377,6 +515,7 @@ export default function Home() {
   }, []);
 
   const currentDay = store.days[selectedDate] ?? emptyDay();
+  const plannerEntries = buildPlannerEntries(currentDay, now);
   const prettyProgress = sectionProgress(prettyCards, currentDay, now);
   const brainProgress = sectionProgress(brainCards, currentDay, now);
   const totalDone = prettyProgress.done + brainProgress.done;
@@ -410,6 +549,134 @@ export default function Home() {
     });
   }
 
+  function syncTimerSession(section: keyof DailyData, key: string, mode: "start" | "pause" | "reset", timestamp = Date.now()) {
+    setStore((current) => {
+      const baseDay = current.days[selectedDate] ?? emptyDay();
+      const selected = baseDay[section] ?? {};
+      const sessions = readTimerSessions(selected as any, key);
+      const nextSessions = [...sessions];
+
+      if (mode === "start") {
+        const active = nextSessions.find((session) => !session.end);
+        if (!active) nextSessions.push({ start: timestamp, end: null });
+      }
+
+      if (mode === "pause") {
+        const active = nextSessions.find((session) => !session.end);
+        if (active) active.end = timestamp;
+      }
+
+      if (mode === "reset") {
+        return {
+          ...current,
+          days: {
+            ...current.days,
+            [selectedDate]: {
+              ...baseDay,
+              [section]: {
+                ...selected,
+                [key]: 0,
+                [startedAtKey(key)]: 0,
+                [sessionKey(key)]: JSON.stringify([]),
+              },
+            },
+          },
+        };
+      }
+
+      return {
+        ...current,
+        days: {
+          ...current.days,
+          [selectedDate]: {
+            ...baseDay,
+            [section]: {
+              ...selected,
+              [sessionKey(key)]: JSON.stringify(nextSessions),
+            },
+          },
+        },
+      };
+    });
+  }
+
+  function startTimerTask(task: TimerTask) {
+    const day = store.days[selectedDate] ?? emptyDay();
+    const allSessions = readSessions(day, "sessions");
+    
+    // Check if another timer is running
+    const activeTimer = allSessions.find((s) => s.isRunning);
+    if (activeTimer) {
+      alert(`현재 "${activeTimer.taskName}"이(가) 진행 중입니다.\n먼저 현재 작업을 종료해주세요.`);
+      return;
+    }
+
+    // Create new session
+    const newSession: TaskSession = {
+      id: `${task.id}-${Date.now()}`,
+      taskId: task.id,
+      taskName: task.name,
+      category: task.category,
+      goalMinutes: task.goalMinutes,
+      startedAt: Date.now(),
+      isRunning: true,
+    };
+
+    const nextSessions = [...allSessions, newSession];
+    setStore((current) => ({
+      ...current,
+      days: {
+        ...current.days,
+        [selectedDate]: {
+          ...(current.days[selectedDate] ?? emptyDay()),
+          sessions: nextSessions,
+        },
+      },
+    }));
+  }
+
+  function endTimerTask(taskId: string) {
+    const day = store.days[selectedDate] ?? emptyDay();
+    const allSessions = readSessions(day, "sessions");
+    
+    const nextSessions = allSessions.map((s) =>
+      s.isRunning && s.taskId === taskId ? { ...s, endedAt: Date.now(), isRunning: false } : s
+    );
+
+    setStore((current) => ({
+      ...current,
+      days: {
+        ...current.days,
+        [selectedDate]: {
+          ...(current.days[selectedDate] ?? emptyDay()),
+          sessions: nextSessions,
+        },
+      },
+    }));
+  }
+
+  function undoLastTaskSession(taskId: string) {
+    const day = store.days[selectedDate] ?? emptyDay();
+    const allSessions = readSessions(day, "sessions");
+    const taskSessions = allSessions.filter((s) => s.taskId === taskId);
+    if (taskSessions.length === 0) return;
+
+    const lastSession = taskSessions.reduce((latest, session) => (session.startedAt > latest.startedAt ? session : latest));
+    if (!window.confirm(`"${lastSession.taskName}"의 가장 최근 기록을 취소할까요?`)) return;
+
+    const nextSessions = allSessions.filter((s) => s.id !== lastSession.id);
+    setStore((current) => ({
+      ...current,
+      days: {
+        ...current.days,
+        [selectedDate]: {
+          ...(current.days[selectedDate] ?? emptyDay()),
+          sessions: nextSessions,
+        },
+      },
+    }));
+  }
+
   function addPosting() {
     const raw = String(currentDay.brain.job_postings || "[]");
     const items = safePostings(raw);
@@ -434,6 +701,25 @@ export default function Home() {
     const reader = new FileReader();
     reader.onload = () => update("record", key, String(reader.result || ""));
     reader.readAsDataURL(file);
+  }
+
+  function updateTodo(dateKey: string, next: PlannerTodo[]) {
+    setStore((current) => {
+      const baseDay = current.days[dateKey] ?? emptyDay();
+      return {
+        ...current,
+        days: {
+          ...current.days,
+          [dateKey]: {
+            ...baseDay,
+            record: {
+              ...baseDay.record,
+              todoList: JSON.stringify(next),
+            },
+          },
+        },
+      };
+    });
   }
 
   return (
@@ -462,23 +748,155 @@ export default function Home() {
       </section>
 
       {tab === "today" && (
-        <>
-          <section className="section">
-            <h2 className="section-title">💗 PRETTY</h2>
-            <div className="section-grid">{prettyCards.map((card) => renderHabitCard(card, currentDay, update, now))}</div>
-          </section>
+        <section className="section">
+          <div className="timer-tasks-section">
+            {timerTasks.map((task) => {
+              const sessions = readSessions(currentDay, "sessions").filter((s) => s.taskId === task.id);
+              const activeTimer = sessions.find((s) => s.isRunning);
+              const hasActiveTimer = readSessions(currentDay, "sessions").some((s) => s.isRunning && s.taskId !== task.id);
+              
+              return (
+                <TaskTimerCard
+                  key={task.id}
+                  task={task}
+                  sessions={sessions}
+                  onStart={() => startTimerTask(task)}
+                  onEnd={() => endTimerTask(task.id)}
+                  onUndo={() => undoLastTaskSession(task.id)}
+                  now={now}
+                  hasActiveTimer={hasActiveTimer}
+                />
+              );
+            })}
+          </div>
 
-          <section className="section">
-            <h2 className="section-title">🧠 BRAIN</h2>
-            <div className="section-grid">{brainCards.map((card) => renderHabitCard(card, currentDay, update, now))}</div>
-            <JobPostings
-              items={safePostings(String(currentDay.brain.job_postings || "[]"))}
-              onAdd={addPosting}
-              onChange={updatePosting}
-              onRemove={removePosting}
-            />
-          </section>
-        </>
+          <article className="card">
+            <div className="row-between">
+              <h2 className="card-title">오늘의 학습 정리</h2>
+              <span className="badge">Memo</span>
+            </div>
+            <label className="field">
+              오늘 배운 내용 / 핵심 정리
+              <textarea
+                value={String(currentDay.record.note || "")}
+                onChange={(event) => update("record", "note", event.target.value)}
+                placeholder="오늘 무엇을 공부했고, 핵심은 무엇이었는지 적어보세요."
+              />
+            </label>
+          </article>
+
+          <article className="card">
+            <div className="row-between">
+              <h2 className="card-title">뉴스 & 상식</h2>
+              <span className="badge">Study</span>
+            </div>
+            <div className="fields">
+              <label className="field">
+                오늘 본 뉴스
+                <textarea
+                  value={String(currentDay.brain.news_note || "")}
+                  onChange={(event) => update("brain", "news_note", event.target.value)}
+                  placeholder="오늘 본 뉴스 중 기억할 내용을 적어보세요."
+                />
+              </label>
+              <label className="field">
+                오늘 알게 된 내용
+                <textarea
+                  value={String(currentDay.brain.common_note || "")}
+                  onChange={(event) => update("brain", "common_note", event.target.value)}
+                  placeholder="오늘 새로 알게 된 상식이나 배운 내용을 적어보세요."
+                />
+              </label>
+            </div>
+          </article>
+
+          <article className="card">
+            <div className="row-between">
+              <h2 className="card-title">커리어</h2>
+              <span className="badge">Career</span>
+            </div>
+            <div className="fields">
+              <label className="field">
+                오늘 준비한 것
+                <textarea
+                  value={String(currentDay.brain.interview_prepared || "")}
+                  onChange={(event) => update("brain", "interview_prepared", event.target.value)}
+                  placeholder="면접 준비, 회사 공부, 챕터 정리 등을 적어보세요."
+                />
+              </label>
+            </div>
+          </article>
+
+          <article className="card">
+            <div className="row-between">
+              <h2 className="card-title">프로젝트 & 배움</h2>
+              <span className="badge">Learn</span>
+            </div>
+            <div className="fields">
+              <label className="field">
+                오늘 한 작업
+                <textarea
+                  value={String(currentDay.brain.project_work || "")}
+                  onChange={(event) => update("brain", "project_work", event.target.value)}
+                  placeholder="프로젝트에서 한 작업을 적어보세요."
+                />
+              </label>
+              <label className="field">
+                오늘 배운 개념 / 내용
+                <textarea
+                  value={String(currentDay.brain.project_learned || "")}
+                  onChange={(event) => update("brain", "project_learned", event.target.value)}
+                  placeholder="오늘 배운 개념, 팁, 인사이트를 적어보세요."
+                />
+              </label>
+            </div>
+          </article>
+
+          <article className="card">
+            <div className="row-between">
+              <h2 className="card-title">언어 표현</h2>
+              <span className="badge">Words</span>
+            </div>
+            <label className="field">
+              오늘 배운 표현
+              <textarea
+                value={String(currentDay.brain.language_expressions || "")}
+                onChange={(event) => update("brain", "language_expressions", event.target.value)}
+                placeholder="외운 표현이나 문장을 적어보세요."
+              />
+            </label>
+          </article>
+
+          <article className="card">
+            <div className="row-between">
+              <h2 className="card-title">유산소</h2>
+              <span className="badge">Exercise</span>
+            </div>
+            <label className="field">
+              오늘 유산소 운동
+              <textarea
+                value={String(currentDay.pretty.cardio_note || "")}
+                onChange={(event) => update("pretty", "cardio_note", event.target.value)}
+                placeholder="오늘 한 유산소 운동 내용을 적어보세요."
+              />
+            </label>
+          </article>
+
+          <article className="card">
+            <div className="row-between">
+              <h2 className="card-title">무산소</h2>
+              <span className="badge">Exercise</span>
+            </div>
+            <label className="field">
+              오늘 무산소 운동
+              <textarea
+                value={String(currentDay.pretty.strength_note || "")}
+                onChange={(event) => update("pretty", "strength_note", event.target.value)}
+                placeholder="오늘 한 근력(무산소) 운동 내용을 적어보세요."
+              />
+            </label>
+          </article>
+        </section>
       )}
 
       {tab === "dashboard" && (
@@ -493,11 +911,15 @@ export default function Home() {
           prettyPercent={prettyPercent}
           brainPercent={brainPercent}
           now={now}
+          onUpdateTodo={updateTodo}
+          currentDay={currentDay}
+          update={update}
+          syncTimerSession={syncTimerSession}
         />
       )}
 
       {tab === "record" && (
-        <RecordView currentDay={currentDay} update={update} handleImage={handleImage} />
+        <RecordView currentDay={currentDay} update={update} handleImage={handleImage} store={store} selectedDate={selectedDate} />
       )}
 
       <nav className="bottom-nav" aria-label="주요 메뉴">
@@ -525,77 +947,130 @@ function renderHabitCard(
   currentDay: DailyData,
   update: (section: keyof DailyData, key: string, value: Primitive) => void,
   now: number,
+  syncTimerSession: (section: keyof DailyData, key: string, mode: "start" | "pause" | "reset", timestamp?: number) => void,
 ) {
   const progress = cardProgress(card, currentDay, now);
   const score = percent(progress.done, progress.total);
   const data = currentDay[card.section];
   const isDone = progress.total > 0 && progress.done === progress.total;
   const visibleChecks = card.id === "grooming" && !data.grooming_needed ? [] : card.checks;
+  const timerEntries = buildCardTimelineEntries(card, currentDay, now);
 
   return (
-    <article className={`card ${isDone ? "done" : ""}`} key={card.id}>
-      <div className="card-head">
-        <div>
-          <h3 className="card-title">{card.title}</h3>
-          {card.subtitle && <p className="card-subtitle">{card.subtitle}</p>}
+    <details className={`sub-card ${isDone ? "done" : ""}`} key={card.id} open>
+      <summary>
+        <div className="sub-card-shell">
+          <div className="sub-card-label">{card.title}</div>
+          <div className="sub-card-content">
+            <div className="sub-card-top">
+              {card.subtitle && <span className="sub-card-subtitle">{card.subtitle}</span>}
+              <span className="badge">{progress.total === 0 ? "제외" : `${score}%`}</span>
+            </div>
+
+            <div className="sub-card-body-row">
+              {visibleChecks && visibleChecks.length > 0 && (
+                <div className="checks sub-card-checks">
+                  {visibleChecks.map((check) => (
+                    <label className="check" key={check.key}>
+                      <input
+                        type="checkbox"
+                        checked={Boolean(data[check.key])}
+                        onChange={(event) => update(card.section, check.key, event.target.checked)}
+                      />
+                      <span>{check.label}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+              
+              {timerEntries.length > 0 && (
+                <div className="sub-card-timeline">
+                  {timerEntries.slice(0, 2).map((entry) => (
+                    <div className="timeline-item" key={entry.id}>
+                      <span className="timeline-label">{entry.label}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
-        <span className="badge">{progress.total === 0 ? "제외" : `${score}%`}</span>
+      </summary>
+
+      <div className="sub-card-body">
+        {card.resource && (
+          <a className="resource-link" href={resources[card.resource]} target="_blank" rel="noreferrer">
+            자료 보기
+          </a>
+        )}
+
+        <div className="timer-layout">
+          <div className="timer-main">
+            {card.fields && (
+              <div className="fields">
+                {card.fields.map((field) => (
+                  <FieldControl
+                    field={field}
+                    key={field.key}
+                    section={card.section}
+                    now={now}
+                    startedAt={data[startedAtKey(field.key)]}
+                    value={data[field.key]}
+                    onChange={(value) => update(card.section, field.key, value)}
+                    onStartedAtChange={(value) => update(card.section, startedAtKey(field.key), value)}
+                    onTimerStart={(key) => syncTimerSession(card.section, key, "start")}
+                    onTimerPause={(key) => syncTimerSession(card.section, key, "pause")}
+                    onTimerReset={(key) => syncTimerSession(card.section, key, "reset")}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+
+          {timerEntries.length > 0 && (
+            <div className="planner-panel">
+              <p className="planner-panel-title">실시간 일정</p>
+              {timerEntries.map((entry) => (
+                <div className="mini-planner-row" key={entry.id}>
+                  <span className="mini-planner-dot" style={{ background: entry.color }} />
+                  <div className="mini-planner-copy">
+                    <strong>{entry.label}</strong>
+                    <span>
+                      {formatClock(entry.start)} ~ {entry.active ? "지금" : formatClock(entry.end)}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
-
-      {card.resource && (
-        <a className="resource-link" href={resources[card.resource]} target="_blank" rel="noreferrer">
-          자료 보기
-        </a>
-      )}
-
-      {card.fields && (
-        <div className="fields">
-          {card.fields.map((field) => (
-            <FieldControl
-              field={field}
-              key={field.key}
-              now={now}
-              startedAt={data[startedAtKey(field.key)]}
-              value={data[field.key]}
-              onChange={(value) => update(card.section, field.key, value)}
-              onStartedAtChange={(value) => update(card.section, startedAtKey(field.key), value)}
-            />
-          ))}
-        </div>
-      )}
-
-      {visibleChecks && visibleChecks.length > 0 && (
-        <div className="checks">
-          {visibleChecks.map((check) => (
-            <label className="check" key={check.key}>
-              <input
-                type="checkbox"
-                checked={Boolean(data[check.key])}
-                onChange={(event) => update(card.section, check.key, event.target.checked)}
-              />
-              <span>{check.label}</span>
-            </label>
-          ))}
-        </div>
-      )}
-    </article>
+    </details>
   );
 }
 
 function FieldControl({
   field,
+  section,
   now,
   startedAt,
   value,
   onChange,
   onStartedAtChange,
+  onTimerStart,
+  onTimerPause,
+  onTimerReset,
 }: {
   field: FieldItem;
+  section: keyof DailyData;
   now: number;
   startedAt: Primitive | undefined;
   value: Primitive | undefined;
   onChange: (value: Primitive) => void;
   onStartedAtChange: (value: Primitive) => void;
+  onTimerStart: (key: string) => void;
+  onTimerPause: (key: string) => void;
+  onTimerReset: (key: string) => void;
 }) {
   if (field.type === "checkbox") {
     return (
@@ -610,11 +1085,15 @@ function FieldControl({
     return (
       <StopwatchControl
         field={field}
+        section={section}
         now={now}
         startedAt={startedAt}
         value={value}
         onChange={onChange}
         onStartedAtChange={onStartedAtChange}
+        onTimerStart={onTimerStart}
+        onTimerPause={onTimerPause}
+        onTimerReset={onTimerReset}
       />
     );
   }
@@ -640,18 +1119,26 @@ function FieldControl({
 
 function StopwatchControl({
   field,
+  section,
   now,
   startedAt,
   value,
   onChange,
   onStartedAtChange,
+  onTimerStart,
+  onTimerPause,
+  onTimerReset,
 }: {
   field: FieldItem;
+  section: keyof DailyData;
   now: number;
   startedAt: Primitive | undefined;
   value: Primitive | undefined;
   onChange: (value: Primitive) => void;
   onStartedAtChange: (value: Primitive) => void;
+  onTimerStart: (key: string) => void;
+  onTimerPause: (key: string) => void;
+  onTimerReset: (key: string) => void;
 }) {
   const baseMinutes = readNumber(value);
   const startTime = readNumber(startedAt);
@@ -661,18 +1148,22 @@ function StopwatchControl({
 
   function start() {
     if (running) return;
-    onStartedAtChange(Date.now());
+    const nextStart = Date.now();
+    onStartedAtChange(nextStart);
+    onTimerStart(field.key);
   }
 
   function pause() {
     if (!running) return;
     onChange(currentMinutes);
     onStartedAtChange(0);
+    onTimerPause(field.key);
   }
 
   function reset() {
     onChange(0);
     onStartedAtChange(0);
+    onTimerReset(field.key);
   }
 
   return (
@@ -745,6 +1236,96 @@ function JobPostings({
   );
 }
 
+function TaskTimerCard({
+  task,
+  sessions,
+  onStart,
+  onEnd,
+  onUndo,
+  now,
+  hasActiveTimer,
+}: {
+  task: TimerTask;
+  sessions: TaskSession[];
+  onStart: () => void;
+  onEnd: () => void;
+  onUndo: () => void;
+  now: number;
+  hasActiveTimer: boolean;
+}) {
+  const activeSession = sessions.find((s) => s.isRunning);
+  
+  // Calculate elapsed time for active session
+  const activeElapsedMinutes = activeSession ? (now - activeSession.startedAt) / 60000 : 0;
+  
+  // Calculate total time from completed sessions
+  const completedMinutes = sessions
+    .filter((s) => s.endedAt)
+    .reduce((sum, s) => sum + ((s.endedAt! - s.startedAt) / 60000), 0);
+  
+  // Total is completed + active
+  const totalMinutes = completedMinutes + activeElapsedMinutes;
+  const reached = totalMinutes >= task.goalMinutes;
+
+  const formatTime = (minutes: number) => {
+    const totalSeconds = Math.floor(minutes * 60);
+    const hours = Math.floor(totalSeconds / 3600);
+    const mins = Math.floor((totalSeconds % 3600) / 60);
+    const secs = totalSeconds % 60;
+    if (hours > 0) return `${hours}:${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+    return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+  };
+
+  const color = taskColors[task.id] ?? categoryColors[task.category];
+
+  return (
+    <article className={`timer-task-card ${activeSession ? "active" : ""}`} style={{ borderTopColor: color }}>
+      <button
+        type="button"
+        className="timer-undo-btn"
+        onClick={onUndo}
+        disabled={sessions.length === 0}
+        aria-label={`${task.name} 최근 기록 취소`}
+        title="가장 최근 기록 취소"
+      >
+        ↺
+      </button>
+
+      <div className="timer-task-head">
+        <h3 className="timer-task-title">
+          <span className="timer-task-dot" style={{ background: color }} />
+          {task.name}
+        </h3>
+        <span className="timer-task-goal">{task.goalMinutes}분</span>
+      </div>
+
+      <div className="timer-display">
+        <p className="timer-value">{formatTime(totalMinutes)}</p>
+        {reached && <span className="timer-badge reached">달성</span>}
+      </div>
+
+      {!activeSession ? (
+        <button
+          className="timer-action-btn start-btn"
+          onClick={onStart}
+          disabled={hasActiveTimer}
+          type="button"
+        >
+          ▶ 시작
+        </button>
+      ) : (
+        <button className="timer-action-btn stop-btn" onClick={onEnd} type="button">
+          ■ 종료
+        </button>
+      )}
+
+      {hasActiveTimer && !activeSession && (
+        <p className="timer-warning">다른 타이머 진행 중</p>
+      )}
+    </article>
+  );
+}
+
 function Dashboard({
   store,
   calendarDays,
@@ -756,6 +1337,10 @@ function Dashboard({
   prettyPercent,
   brainPercent,
   now,
+  onUpdateTodo,
+  currentDay,
+  update,
+  syncTimerSession,
 }: {
   store: Store;
   calendarDays: string[];
@@ -767,8 +1352,33 @@ function Dashboard({
   prettyPercent: number;
   brainPercent: number;
   now: number;
+  onUpdateTodo: (dateKey: string, next: PlannerTodo[]) => void;
+  currentDay: DailyData;
+  update: (section: keyof DailyData, key: string, value: Primitive) => void;
+  syncTimerSession: (section: keyof DailyData, key: string, mode: "start" | "pause" | "reset", timestamp?: number) => void;
 }) {
+  const [todoDrafts, setTodoDrafts] = useState<Record<string, string>>({});
   const bodyChanges = getBodyChanges(store);
+
+  function addTodo(dateKey: string) {
+    const text = (todoDrafts[dateKey] || "").trim();
+    if (!text) return;
+    const existing = readTodoList(store.days[dateKey]?.record || {});
+    onUpdateTodo(dateKey, [...existing, { id: `${dateKey}-${Date.now()}`, text, done: false }]);
+    setTodoDrafts((current) => ({ ...current, [dateKey]: "" }));
+  }
+
+  function toggleTodo(dateKey: string, id: string) {
+    const next = readTodoList(store.days[dateKey]?.record || {}).map((item) =>
+      item.id === id ? { ...item, done: !item.done } : item,
+    );
+    onUpdateTodo(dateKey, next);
+  }
+
+  function removeTodo(dateKey: string, id: string) {
+    const next = readTodoList(store.days[dateKey]?.record || {}).filter((item) => item.id !== id);
+    onUpdateTodo(dateKey, next);
+  }
 
   return (
     <section className="section">
@@ -819,13 +1429,126 @@ function Dashboard({
                 type="button"
                 onClick={() => {
                   selectDate(date);
-                  setTab("today");
                 }}
               >
                 {index + 1}
               </button>
             );
           })}
+        </div>
+      </article>
+
+      <article className="card">
+        <div className="row-between">
+          <h2 className="card-title">Study Planner</h2>
+          <span className="badge">Selected Day</span>
+        </div>
+
+        <div className="planner-day planner-day-single">
+          <div className="planner-sheet-head">
+            <span className="sheet-pill">DATE</span>
+            <span className="sheet-pill">D-DAY</span>
+            <span className="sheet-pill">GOAL</span>
+          </div>
+
+          <div className="planner-sheet-body">
+            <div className="planner-list-pane">
+              <div className="panel-label">LIST</div>
+              <div className="planner-list-lines">
+                {readTodoList((store.days[selectedDate] ?? emptyDay()).record || {}).length > 0 ? (
+                  readTodoList((store.days[selectedDate] ?? emptyDay()).record || {}).map((todo) => (
+                    <div key={todo.id} className={`planner-list-item ${todo.done ? "done" : ""}`}>
+                      <input
+                        type="checkbox"
+                        checked={todo.done}
+                        onChange={(event) => {
+                          event.stopPropagation();
+                          toggleTodo(selectedDate, todo.id);
+                        }}
+                      />
+                      <span>{todo.text}</span>
+                      <button
+                        type="button"
+                        className="planner-delete-button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          removeTodo(selectedDate, todo.id);
+                        }}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))
+                ) : (
+                  <div className="planner-empty-list" />
+                )}
+              </div>
+              <div className="planner-input-wrap">
+                <input
+                  className="planner-input"
+                  value={todoDrafts[selectedDate] ?? ""}
+                  onChange={(event) => setTodoDrafts((current) => ({ ...current, [selectedDate]: event.target.value }))}
+                  onClick={(event) => event.stopPropagation()}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      addTodo(selectedDate);
+                    }
+                  }}
+                  placeholder="할 일 입력"
+                />
+                <button
+                  type="button"
+                  className="planner-add-button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    addTodo(selectedDate);
+                  }}
+                >
+                  추가
+                </button>
+              </div>
+            </div>
+
+            <div className="planner-timetable-pane">
+              <div className="panel-label">TIME TABLE</div>
+              <div className="planner-grid-head">
+                {plannerMinuteCols.map((value) => (
+                  <span key={`head-${value}`}>{value}</span>
+                ))}
+              </div>
+              <div className="planner-legend">
+                {timerTasks.map((task) => (
+                  <span className="planner-legend-item" key={task.id}>
+                    <span className="planner-legend-dot" style={{ background: taskColors[task.id] }} />
+                    {task.name}
+                  </span>
+                ))}
+              </div>
+              <div className="planner-grid-body">
+                {(() => {
+                  const dayPlanner = getStudyPlannerForDay(store.days[selectedDate] ?? emptyDay(), now);
+                  const segmentsByHour = buildPlannerSegments(dayPlanner.timeBlocks);
+                  return plannerHourRows.map((row) => (
+                    <div className="planner-grid-row" key={`${selectedDate}-${row}`}>
+                      <span className="planner-row-label">{row}</span>
+                      <div className="planner-row-track">
+                        {(segmentsByHour[row] ?? []).map((segment, index) => (
+                          <span
+                            key={`${selectedDate}-${row}-${index}`}
+                            className="planner-row-bar"
+                            title={segment.label}
+                            style={{ left: `${segment.leftPct}%`, width: `${segment.widthPct}%`, background: segment.color }}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  ));
+                })()}
+              </div>
+            </div>
+          </div>
         </div>
       </article>
 
@@ -860,14 +1583,26 @@ function Dashboard({
   );
 }
 
+function findFirstPhoto(store: Store, key: "facePhoto" | "bodyPhoto", beforeDate: string) {
+  const dateKey = Object.keys(store.days)
+    .sort()
+    .find((date) => date < beforeDate && Boolean(store.days[date]?.record[key]));
+  if (!dateKey) return null;
+  return { dateKey, value: String(store.days[dateKey].record[key]) };
+}
+
 function RecordView({
   currentDay,
   update,
   handleImage,
+  store,
+  selectedDate,
 }: {
   currentDay: DailyData;
   update: (section: keyof DailyData, key: string, value: Primitive) => void;
   handleImage: (event: ChangeEvent<HTMLInputElement>, key: "facePhoto" | "bodyPhoto") => void;
+  store: Store;
+  selectedDate: string;
 }) {
   const measurements = [
     ["waist", "허리"],
@@ -878,13 +1613,34 @@ function RecordView({
     ["chest", "가슴"],
   ] as const;
 
+  const firstFace = findFirstPhoto(store, "facePhoto", selectedDate);
+  const firstBody = findFirstPhoto(store, "bodyPhoto", selectedDate);
+
   return (
     <section className="section">
       <article className="card">
-        <h2 className="card-title">Today's Photo</h2>
+        <div className="row-between">
+          <h2 className="card-title">Today's Photo</h2>
+          <span className="badge">가이드라인 정렬</span>
+        </div>
+        <p className="card-subtitle">
+          점선 가이드에 얼굴·몸 위치를 맞춰 찍으면 30일 후 변화를 비교하기 쉬워요.
+        </p>
         <div className="photo-grid">
-          <PhotoInput label="얼굴 사진" value={String(currentDay.record.facePhoto || "")} onChange={(event) => handleImage(event, "facePhoto")} />
-          <PhotoInput label="몸 사진" value={String(currentDay.record.bodyPhoto || "")} onChange={(event) => handleImage(event, "bodyPhoto")} />
+          <PhotoInput
+            label="얼굴 사진"
+            value={String(currentDay.record.facePhoto || "")}
+            onChange={(event) => handleImage(event, "facePhoto")}
+            reference={firstFace}
+            startDate={store.startDate}
+          />
+          <PhotoInput
+            label="몸 사진"
+            value={String(currentDay.record.bodyPhoto || "")}
+            onChange={(event) => handleImage(event, "bodyPhoto")}
+            reference={firstBody}
+            startDate={store.startDate}
+          />
         </div>
       </article>
 
@@ -922,18 +1678,100 @@ function PhotoInput({
   label,
   value,
   onChange,
+  reference,
+  startDate,
 }: {
   label: string;
   value: string;
   onChange: (event: ChangeEvent<HTMLInputElement>) => void;
+  reference: { dateKey: string; value: string } | null;
+  startDate: string;
 }) {
   return (
     <label className="photo-box">
       <span className="card-subtitle">{label}</span>
-      <div className="preview">{value ? <img alt={label} src={value} /> : <span className="empty">사진 없음</span>}</div>
+      <div className="preview">
+        {value ? <img alt={label} src={value} /> : <span className="empty">사진 없음</span>}
+        <PhotoGuideOverlay />
+      </div>
       <input accept="image/*" type="file" onChange={onChange} />
+      {reference && (
+        <div className="photo-reference">
+          <span className="photo-reference-label">DAY {String(getDayNumber(startDate, reference.dateKey)).padStart(2, "0")} 기록과 비교</span>
+          <div className="photo-reference-thumb">
+            <img alt={`${label} 첫 기록`} src={reference.value} />
+            <PhotoGuideOverlay />
+          </div>
+        </div>
+      )}
     </label>
   );
+}
+
+function PhotoGuideOverlay() {
+  return (
+    <svg className="photo-guide" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+      <line x1="33.3" y1="0" x2="33.3" y2="100" />
+      <line x1="66.6" y1="0" x2="66.6" y2="100" />
+      <line x1="0" y1="33.3" x2="100" y2="33.3" />
+      <line x1="0" y1="66.6" x2="100" y2="66.6" />
+    </svg>
+  );
+}
+
+function buildPlannerEntries(day: DailyData, now: number) {
+  const entries: Array<{ id: string; label: string; title: string; start: number; end: number; active: boolean; color: string }> = [];
+
+  allCards.forEach((card) => {
+    const data = day[card.section];
+    card.fields?.forEach((field) => {
+      if (field.type !== "number" || !field.target) return;
+      const sessions = readTimerSessions(data, field.key);
+      if (sessions.length === 0 && readNumber(data[field.key]) <= 0) return;
+
+      const activeSession = sessions.find((session) => !session.end);
+      const start = activeSession ? Number(activeSession.start) : sessions.length ? Math.min(...sessions.map((session) => Number(session.start))) : 0;
+      const end = activeSession ? now : sessions.length ? Math.max(...sessions.map((session) => Number(session.end ?? session.start))) : now;
+
+      if (!start || !end) return;
+      entries.push({
+        id: `${card.id}-${field.key}`,
+        label: field.label,
+        title: card.title,
+        start,
+        end,
+        active: Boolean(activeSession),
+        color: categoryColors[card.section],
+      });
+    });
+  });
+
+  return entries.sort((a, b) => a.start - b.start);
+}
+
+function buildCardTimelineEntries(card: HabitCard, day: DailyData, now: number) {
+  const data = day[card.section];
+  const entries: Array<{ id: string; label: string; start: number; end: number; active: boolean; color: string }> = [];
+
+  card.fields?.forEach((field) => {
+    if (field.type !== "number" || !field.target) return;
+    const sessions = readTimerSessions(data, field.key);
+    if (sessions.length === 0 && readNumber(data[field.key]) <= 0) return;
+
+    const activeSession = sessions.find((session) => !session.end);
+    const start = activeSession ? Number(activeSession.start) : sessions.length ? Math.min(...sessions.map((session) => Number(session.start))) : 0;
+    const end = activeSession ? now : sessions.length ? Math.max(...sessions.map((session) => Number(session.end ?? session.start))) : now;
+
+    if (!start || !end) return;
+    entries.push({ id: `${card.id}-${field.key}`, label: field.label, start, end, active: Boolean(activeSession), color: categoryColors[card.section] });
+  });
+
+  return entries;
+}
+
+function formatClock(value: number) {
+  const date = new Date(value);
+  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
 }
 
 function safePostings(raw: string) {
@@ -948,6 +1786,70 @@ function safePostings(raw: string) {
   } catch {
     return [];
   }
+}
+
+function getStudyPlannerForDay(day: DailyData, now: number) {
+  const timeBlocks: Array<{ label: string; start: number; end: number; color: string }> = readSessions(day, "sessions")
+    .filter((session) => session.startedAt > 0)
+    .map((session) => ({
+      label: session.taskName,
+      start: session.startedAt,
+      end: session.isRunning ? now : session.endedAt ?? now,
+      color: taskColors[session.taskId] ?? categoryColors[session.category],
+    }));
+
+  const customTodos = readTodoList(day.record).map((item) => ({
+    label: item.text,
+    color: item.done ? "#bfe9d6" : "#e7d3ff",
+  }));
+
+  return { timeBlocks, todoBlocks: customTodos };
+}
+
+const plannerHourRows = [
+  "07", "08", "09", "10", "11", "12", "13", "14", "15", "16",
+  "17", "18", "19", "20", "21", "22", "23", "01", "02", "03",
+];
+const plannerMinuteCols = [0, 10, 20, 30, 40, 50];
+
+type PlannerSegment = { leftPct: number; widthPct: number; color: string; label: string };
+
+// 각 세션을 걸쳐 있는 시간(hour) 단위로 쪼개서, 분 단위 좌표(0~100%)를 가진 막대 조각으로 만든다.
+function buildPlannerSegments(
+  timeBlocks: Array<{ label: string; start: number; end: number; color: string }>,
+): Record<string, PlannerSegment[]> {
+  const segmentsByHour: Record<string, PlannerSegment[]> = {};
+
+  timeBlocks.forEach((block) => {
+    const blockEnd = Math.max(block.end, block.start + 60000);
+    let cursor = new Date(block.start);
+
+    while (cursor.getTime() < blockEnd) {
+      const hourLabel = String(cursor.getHours()).padStart(2, "0");
+      const hourStart = new Date(cursor);
+      hourStart.setMinutes(0, 0, 0);
+      const hourEnd = new Date(hourStart.getTime() + 60 * 60000);
+
+      const segStart = Math.max(block.start, hourStart.getTime());
+      const segEnd = Math.min(blockEnd, hourEnd.getTime());
+
+      if (plannerHourRows.includes(hourLabel) && segEnd > segStart) {
+        const startMinutes = (segStart - hourStart.getTime()) / 60000;
+        const endMinutes = (segEnd - hourStart.getTime()) / 60000;
+        const list = segmentsByHour[hourLabel] ?? (segmentsByHour[hourLabel] = []);
+        list.push({
+          leftPct: (startMinutes / 60) * 100,
+          widthPct: Math.max(((endMinutes - startMinutes) / 60) * 100, 1.2),
+          color: block.color,
+          label: block.label,
+        });
+      }
+
+      cursor = hourEnd;
+    }
+  });
+
+  return segmentsByHour;
 }
 
 function getBodyChanges(store: Store) {
