@@ -706,8 +706,21 @@ export default function Home() {
   }
 
   function resetStartDate() {
-    if (!window.confirm("오늘을 1일차로 다시 설정할까요? 지금까지 날짜별로 기록한 데이터는 그대로 유지돼요.")) return;
-    setStore((current) => ({ ...current, startDate: todayKey() }));
+    if (
+      !window.confirm(
+        "오늘을 1일차로 다시 설정할까요? 오늘 이전 날짜의 기록은 삭제되고, 오늘 기록부터 1일차로 유지돼요.",
+      )
+    )
+      return;
+    const newStart = todayKey();
+    setStore((current) => {
+      const nextDays: Record<string, DailyData> = {};
+      Object.keys(current.days).forEach((dateKey) => {
+        if (dateKey >= newStart) nextDays[dateKey] = current.days[dateKey];
+      });
+      if (!nextDays[newStart]) nextDays[newStart] = emptyDay();
+      return { ...current, startDate: newStart, days: nextDays };
+    });
   }
 
   function handleImage(event: ChangeEvent<HTMLInputElement>, key: "facePhoto" | "bodyPhoto") {
