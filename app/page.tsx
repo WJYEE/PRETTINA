@@ -278,12 +278,12 @@ const habitSummary = [
   { label: "6시 기상", test: (day: DailyData) => Boolean(day.pretty.wake_6) },
   {
     label: "운동",
-    test: (day: DailyData) => elapsedMinutes(day.pretty, "cardio_minutes") >= 30 || elapsedMinutes(day.pretty, "strength_minutes") >= 30,
+    test: (day: DailyData, now: number) => timerElapsedMinutes(day, "cardio", now) >= 30 || timerElapsedMinutes(day, "strength", now) >= 30,
   },
   {
     label: "괄사",
-    test: (day: DailyData) =>
-      elapsedMinutes(day.pretty, "morning_gua_sha_minutes") >= 10 || elapsedMinutes(day.pretty, "evening_gua_sha_minutes") >= 10,
+    test: (day: DailyData, now: number) =>
+      timerElapsedMinutes(day, "morning_gua_sha", now) >= 10 || timerElapsedMinutes(day, "evening_gua_sha", now) >= 10,
   },
   {
     label: "스킨케어",
@@ -295,9 +295,9 @@ const habitSummary = [
       Boolean(day.pretty.evening_moisturizer),
   },
   { label: "식단", test: (day: DailyData) => Boolean(day.pretty.diet_meal) },
-  { label: "뉴스", test: (day: DailyData) => elapsedMinutes(day.brain, "news_minutes") >= 20 },
-  { label: "데이터 공부", test: (day: DailyData) => elapsedMinutes(day.brain, "data_minutes") >= 30 },
-  { label: "언어 공부", test: (day: DailyData) => elapsedMinutes(day.brain, "language_minutes") >= 30 },
+  { label: "뉴스", test: (day: DailyData, now: number) => timerElapsedMinutes(day, "news", now) >= 20 },
+  { label: "데이터 공부", test: (day: DailyData, now: number) => timerElapsedMinutes(day, "data_study", now) >= 30 },
+  { label: "언어 공부", test: (day: DailyData, now: number) => timerElapsedMinutes(day, "language", now) >= 30 },
 ];
 
 function emptyDay(): DailyData {
@@ -465,6 +465,20 @@ function sectionProgress(cards: HabitCard[], day: DailyData, now = Date.now()) {
   );
 }
 
+// Today 화면은 timerTasks + sessions로 시간을 재기 때문에, 달성률도 실제로 기록되는
+// 이 데이터를 기준으로 계산한다 (예전 필드 기반 스톱워치는 더 이상 UI에서 쓰지 않음).
+function timerElapsedMinutes(day: DailyData, taskId: string, now: number) {
+  return readSessions(day, "sessions")
+    .filter((session) => session.taskId === taskId)
+    .reduce((sum, session) => sum + Math.max(0, (session.isRunning ? now : session.endedAt ?? now) - session.startedAt) / 60000, 0);
+}
+
+function timerCategoryProgress(day: DailyData, category: SectionName, now: number) {
+  const tasks = timerTasks.filter((task) => task.category === category);
+  const done = tasks.filter((task) => timerElapsedMinutes(day, task.id, now) >= task.goalMinutes).length;
+  return { done, total: tasks.length };
+}
+
 function ensureDay(store: Store, dateKey: string): Store {
   if (store.days[dateKey]) return store;
   return {
@@ -523,8 +537,8 @@ export default function Home() {
 
   const currentDay = store.days[selectedDate] ?? emptyDay();
   const plannerEntries = buildPlannerEntries(currentDay, now);
-  const prettyProgress = sectionProgress(prettyCards, currentDay, now);
-  const brainProgress = sectionProgress(brainCards, currentDay, now);
+  const prettyProgress = timerCategoryProgress(currentDay, "pretty", now);
+  const brainProgress = timerCategoryProgress(currentDay, "brain", now);
   const totalDone = prettyProgress.done + brainProgress.done;
   const totalItems = prettyProgress.total + brainProgress.total;
   const todayPercent = percent(totalDone, totalItems);
@@ -1498,8 +1512,8 @@ function Dashboard({
         <div className="calendar">
           {calendarDays.map((date, index) => {
             const day = store.days[date] ?? emptyDay();
-            const pretty = sectionProgress(prettyCards, day, now);
-            const brain = sectionProgress(brainCards, day, now);
+            const pretty = timerCategoryProgress(day, "pretty", now);
+            const brain = timerCategoryProgress(day, "brain", now);
             const score = percent(pretty.done + brain.done, pretty.total + brain.total);
             const level = score === 0 ? 0 : score < 40 ? 1 : score < 75 ? 2 : 3;
             return (
@@ -1638,7 +1652,7 @@ function Dashboard({
           {habitSummary.map((habit) => (
             <li key={habit.label}>
               <span>{habit.label}</span>
-              <strong>{calendarDays.filter((date) => habit.test(store.days[date] ?? emptyDay())).length} / 30</strong>
+              <strong>{calendarDays.filter((date) => habit.test(store.days[date] ?? emptyDay(), now)).length} / 30</strong>
             </li>
           ))}
         </ul>
