@@ -113,12 +113,13 @@ const timerTasks: TimerTask[] = [
   // BRAIN
   { id: "news", name: "뉴스", category: "brain", goalMinutes: 20 },
   { id: "company_study", name: "회사 공부", category: "brain", goalMinutes: 20 },
-  { id: "common_knowledge", name: "상식", category: "brain", goalMinutes: 20 },
+  { id: "common_knowledge", name: "상식", category: "brain", goalMinutes: 10 },
   { id: "interview_prep", name: "면접 준비", category: "brain", goalMinutes: 30 },
   { id: "data_study", name: "데이터 공부", category: "brain", goalMinutes: 30 },
   { id: "project", name: "내 프로젝트", category: "brain", goalMinutes: 20 },
   { id: "language", name: "언어 공부", category: "brain", goalMinutes: 30 },
   { id: "voice", name: "발성 연습", category: "brain", goalMinutes: 10 },
+  { id: "makeup_study", name: "나머지공부", category: "brain", goalMinutes: 20 },
 ];
 
 // 카테고리별 팔레트를 순환 배정해 Dashboard Time Table과 시각적으로 연동한다.
@@ -132,6 +133,8 @@ const taskColors: Record<string, string> = (() => {
   });
   return map;
 })();
+// 나머지공부는 다른 task와 구분되게 회색으로 고정한다.
+taskColors.makeup_study = "#9aa0a6";
 
 const prettyCards: HabitCard[] = [
   {
@@ -917,21 +920,6 @@ export default function Home() {
                 value={String(currentDay.brain.language_expressions || "")}
                 onChange={(event) => update("brain", "language_expressions", event.target.value)}
                 placeholder="외운 표현이나 문장을 적어보세요."
-              />
-            </label>
-          </article>
-
-          <article className="card">
-            <div className="row-between">
-              <h2 className="card-title">나머지공부</h2>
-              <span className="badge">Study</span>
-            </div>
-            <label className="field">
-              오늘 한 나머지공부
-              <textarea
-                value={String(currentDay.brain.makeup_study_note || "")}
-                onChange={(event) => update("brain", "makeup_study_note", event.target.value)}
-                placeholder="오늘 한 나머지공부 내용을 적어보세요."
               />
             </label>
           </article>
