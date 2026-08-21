@@ -229,7 +229,7 @@ const brainCards: HabitCard[] = [
     fields: [
       { key: "news_minutes", label: "뉴스 공부 시간", type: "number", target: 20 },
       { key: "news_note", label: "오늘 본 뉴스", type: "textarea" },
-      { key: "common_minutes", label: "상식 공부 시간", type: "number", target: 20 },
+      { key: "common_minutes", label: "상식 공부 시간", type: "number", target: 10 },
       { key: "common_note", label: "오늘 알게 된 내용", type: "textarea" },
     ],
   },
@@ -903,6 +903,21 @@ export default function Home() {
                 value={String(currentDay.brain.language_expressions || "")}
                 onChange={(event) => update("brain", "language_expressions", event.target.value)}
                 placeholder="외운 표현이나 문장을 적어보세요."
+              />
+            </label>
+          </article>
+
+          <article className="card">
+            <div className="row-between">
+              <h2 className="card-title">나머지공부</h2>
+              <span className="badge">Study</span>
+            </div>
+            <label className="field">
+              오늘 한 나머지공부
+              <textarea
+                value={String(currentDay.brain.makeup_study_note || "")}
+                onChange={(event) => update("brain", "makeup_study_note", event.target.value)}
+                placeholder="오늘 한 나머지공부 내용을 적어보세요."
               />
             </label>
           </article>
