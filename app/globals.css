@@ -1259,6 +1259,11 @@ summary {
   width: fit-content;
 }
 
+.timer-task-goal.free {
+  background: rgba(154, 160, 166, 0.14);
+  color: #6b7076;
+}
+
 .timer-display {
   display: flex;
   flex-direction: column;

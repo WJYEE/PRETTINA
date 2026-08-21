@@ -69,7 +69,9 @@ type TimerTask = {
   id: string;
   name: string;
   category: "pretty" | "brain";
-  goalMinutes: number;
+  // 목표 시간이 없으면(undefined) 그냥 시간만 재는 항목으로 취급하고,
+  // 달성 여부 판단이나 카테고리 달성률 계산에서 제외한다.
+  goalMinutes?: number;
   description?: string;
 };
 
@@ -119,7 +121,8 @@ const timerTasks: TimerTask[] = [
   { id: "project", name: "내 프로젝트", category: "brain", goalMinutes: 20 },
   { id: "language", name: "언어 공부", category: "brain", goalMinutes: 30 },
   { id: "voice", name: "발성 연습", category: "brain", goalMinutes: 10 },
-  { id: "makeup_study", name: "나머지공부", category: "brain", goalMinutes: 20 },
+  { id: "makeup_study", name: "나머지공부", category: "brain" },
+  { id: "job_postings_timer", name: "채용공고", category: "brain" },
 ];
 
 // 카테고리별 팔레트를 순환 배정해 Dashboard Time Table과 시각적으로 연동한다.
@@ -477,8 +480,9 @@ function timerElapsedMinutes(day: DailyData, taskId: string, now: number) {
 }
 
 function timerCategoryProgress(day: DailyData, category: SectionName, now: number) {
-  const tasks = timerTasks.filter((task) => task.category === category);
-  const done = tasks.filter((task) => timerElapsedMinutes(day, task.id, now) >= task.goalMinutes).length;
+  // goalMinutes가 없는 task(나머지공부, 채용공고 등)는 목표/달성 개념이 없으므로 집계에서 제외한다.
+  const tasks = timerTasks.filter((task) => task.category === category && task.goalMinutes);
+  const done = tasks.filter((task) => timerElapsedMinutes(day, task.id, now) >= task.goalMinutes!).length;
   return { done, total: tasks.length };
 }
 
@@ -644,7 +648,7 @@ export default function Home() {
       taskId: task.id,
       taskName: task.name,
       category: task.category,
-      goalMinutes: task.goalMinutes,
+      goalMinutes: task.goalMinutes ?? 0,
       startedAt: Date.now(),
       isRunning: true,
     };
@@ -1347,7 +1351,7 @@ function TaskTimerCard({
   
   // Total is completed + active
   const totalMinutes = completedMinutes + activeElapsedMinutes;
-  const reached = totalMinutes >= task.goalMinutes;
+  const reached = task.goalMinutes != null && totalMinutes >= task.goalMinutes;
 
   const formatTime = (minutes: number) => {
     const totalSeconds = Math.floor(minutes * 60);
@@ -1378,7 +1382,11 @@ function TaskTimerCard({
           <span className="timer-task-dot" style={{ background: color }} />
           {task.name}
         </h3>
-        <span className="timer-task-goal">{task.goalMinutes}분</span>
+        {task.goalMinutes != null ? (
+          <span className="timer-task-goal">{task.goalMinutes}분</span>
+        ) : (
+          <span className="timer-task-goal free">자유 기록</span>
+        )}
       </div>
 
       <div className="timer-display">
